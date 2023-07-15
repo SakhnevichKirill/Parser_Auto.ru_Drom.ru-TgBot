@@ -1,0 +1,8 @@
+venv/
+.idea/
+**/__pycache__
+app/.env
+auto.csv
+data_results/
+geckodriver.log
+app/sessions/
