@@ -5,4 +5,3 @@ app/.env
 auto.csv
 data_results/
 geckodriver.log
-app/sessions/
