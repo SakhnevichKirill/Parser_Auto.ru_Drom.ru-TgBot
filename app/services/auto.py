@@ -1,7 +1,8 @@
-from typing import Optional
+from typing import Optional, SupportsIndex
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote import webelement
-from parser_1 import Parser
+from selenium.webdriver.remote.webdriver import WebDriver
+from parser import Parser
 import time
 import os, sys
 import pandas as pd
@@ -9,6 +10,7 @@ import pandas as pd
 sys.path.insert(1, os.path.join(sys.path[0], "../"))
 from models import Advertisement
 from database import app, conn
+from bot import send_ad, escape_reserved
 
 # from bot import send_ad
 
@@ -17,6 +19,7 @@ class AutoParser(Parser):
     def __init__(self, price: int, debug: Optional[bool] = False):
         Parser.__init__(self, service="auto", debug=debug)
         self.price = price
+        self.driver: WebDriver
         self.advertisement = dict()
         self.url = f"https://auto.ru/moskva/cars/all/?top_days=2&price_to={self.price}&with_discount=false&sort=cr_date-desc&damage_group=ANY&page="
 
@@ -27,16 +30,23 @@ class AutoParser(Parser):
             spec_dict[spec_str_list[i]] = spec_str_list[i + 1]
         return spec_dict
 
-    def parse_page(self) -> int:
+    def parse_page(
+        self, csv_folder_path="./data_results", save_to_csv=False, save_to_db=False
+    ) -> int:
         try:
             page: int = 0
             while True:
                 page += 1
                 if page == 1:
+                    time.sleep(1)
                     self.load_cookie(url=self.url + str(page))
+                    time.sleep(2)
                 else:
                     self.driver.get(url=self.url + str(page))
-                time.sleep(5)
+
+                # Wait for captcha solution from user
+                # time.sleep(3)
+
                 # delete infinity advertisement scrolling
                 self.driver.execute_script(
                     'const remove = (sel) => document.querySelectorAll(sel).forEach(el => el.remove()); remove(".ListingInfiniteDesktop__snippet");'
@@ -68,95 +78,131 @@ class AutoParser(Parser):
                     ad_milage = list(map(lambda x: x.text, mileage))
                     ad_year = list(map(lambda x: x.text, year))
 
-                    print("names count: ", len(ad_name))
-                    print("price count: ", len(ad_price))
-                    print("details count: ", len(ad_details))
-                    print("milage count: ", len(ad_milage))
-                    print("year count: ", len(ad_year))
+                    # print("names count: ", len(ad_name))
+                    # print("price count: ", len(ad_price))
+                    # print("details count: ", len(ad_details))
+                    # print("milage count: ", len(ad_milage))
+                    # print("year count: ", len(ad_year))
 
                     assert not any(
                         len(x) != len(ad_href)
                         for x in [ad_name, ad_price, ad_details, ad_milage, ad_year]
                     ), "Error: parsing attributes len mismatch"
 
-                    for i in range(2):
+                    for i in range(len(ad_href)):
                         self.advertisement[ad_href[i]] = {
                             "href": ad_href[i],
-                            "name": ad_name[i],
-                            "price": ad_price[i],
-                            "details": ad_details[i],
-                            "milage": ad_milage[i],
-                            "year": ad_year[i],
+                            "name": escape_reserved(ad_name[i]),
+                            "price": escape_reserved(ad_price[i]),
+                            "details": escape_reserved(ad_details[i]),
+                            "milage": escape_reserved(ad_milage[i]),
+                            "year": escape_reserved(ad_year[i]),
                         }
                         self.driver.get(url=ad_href[i])
-                        specifications_urls = self.driver.find_elements(
+                        specifications_url = self.driver.find_element(
                             by=By.XPATH,
                             value='//a[contains(text(),"Характеристики модели в каталоге")]',
                         )
-                        specifications_urls = list(
-                            map(lambda x: x.get_attribute("href"), specifications_urls)
-                        )
-                        if len(specifications_urls) != 0:
-                            print(len(specifications_urls))
-                            self.driver.get(url=specifications_urls[0])
+                        specifications_url = specifications_url.get_attribute("href")
+                        if specifications_url:
+                            # print(specifications_url)
 
-                            specifications = self.driver.find_elements(
+                            self.driver.get(url=specifications_url)
+                            specification = self.driver.find_element(
                                 by=By.XPATH,
-                                value='//dl[contains(@class,"list-values clearfix")]',
+                                value='//div[contains(@class,"ModificationInfo-GiDD1")]',
                             )
-                            specifications_dict_list = list(
-                                map(lambda x: self.parse_specs(x.text), specifications)
+                            titles = self.driver.find_elements(
+                                by=By.XPATH,
+                                value='//h3[contains(@class,"ModificationInfo__groupName")]',
                             )
-                            for specifications_dict in specifications_dict_list:
-                                self.advertisement[ad_href[i]] = (
-                                    self.advertisement[ad_href[i]] | specifications_dict
+                            ad_titles = list(map(lambda x: x.text, titles))
+                            text_res = specification.text
+                            # text_res = text_res.replace("\n", " \n " )
+                            # print(text_res)
+                            # time.sleep(2)
+
+                            text_res = escape_reserved(text_res)
+                            split_text = []
+                            start_index = 0
+                            end_index = -1
+                            for title in reversed(ad_titles):
+                                start_index = text_res.find(title, 0, end_index)
+                                split_text.append(text_res[start_index:end_index])
+                                end_index = start_index
+                            # print(len(split_text))
+                            msg = ""
+                            import re
+
+                            for text in split_text:
+                                text = re.sub(
+                                    pattern="\n", repl="* \n", string=text, count=1
                                 )
+                                text_arr = text.splitlines()
+                                msg += "    \n\n *" + text_arr[0] + "||"
+                                for text_index in range(1, len(text_arr)):
+                                    if text_index % 2 == 1:
+                                        msg += "\n" + text_arr[text_index][:-1]
+                                    else:
+                                        msg += ": " + text_arr[text_index]
+                                msg += "||"
+                            self.advertisement[ad_href[i]]["modification_info"] = msg
+                    if save_to_csv:
+                        df = pd.DataFrame.from_dict(self.advertisement, orient="index")
+                        if not os.path.exists(csv_folder_path):
+                            os.makedirs(csv_folder_path)
+                        df.to_csv(f"{csv_folder_path}/auto{page}.csv", index=False)
 
-                        print(self.advertisement[ad_href[i]])
-                        time.sleep(3)
+                    if save_to_db:
+                        with app.app_context():
+                            app.config.from_pyfile("config.py")
+                            conn.init_app(app)
 
-                    print(0)
-
-                    df = pd.DataFrame.from_dict(self.advertisement, orient="index")
-                    df.to_csv(f"./data_results/auto{page}.csv", index=False)
-
-                    with app.app_context():
-                        app.config.from_pyfile("config.py")
-                        conn.init_app(app)
-
-                        for key, value in self.advertisement.items():
-                            output = Advertisement().create(
-                                href=self.advertisement[key]["href"],
-                                title=self.advertisement[key]["name"],
-                                price=self.advertisement[key]["price"],
-                                details=self.advertisement[key]["details"],
-                                milage=self.advertisement[key]["milage"],
-                                year=self.advertisement[key]["year"],
-                                is_send=False,
-                                service=self.service,
-                            )
-                            print(output)
-
-                            ad = Advertisement.query.filter_by(href=key).first()
-
-                            if ad.is_send is False:
-                                print(
+                            for key, value in self.advertisement.items():
+                                output = Advertisement().create(
                                     href=self.advertisement[key]["href"],
-                                    name=self.advertisement[key]["name"],
+                                    title=self.advertisement[key]["name"],
                                     price=self.advertisement[key]["price"],
                                     details=self.advertisement[key]["details"],
-                                    service=self.service,
                                     milage=self.advertisement[key]["milage"],
                                     year=self.advertisement[key]["year"],
+                                    modification_info=self.advertisement[key][
+                                        "modification_info"
+                                    ],
+                                    is_send=False,
+                                    service=self.service,
                                 )
+                                print(output)
 
-                                ad.is_send = True
-                                conn.session.commit()
+                                ad = Advertisement.query.filter_by(href=key).first()
 
-                            else:
-                                pass
-                else:
+                                if ad.is_send is False:
+                                    send_ad(
+                                        href=self.advertisement[key]["href"],
+                                        name=self.advertisement[key]["name"],
+                                        price=self.advertisement[key]["price"],
+                                        details=self.advertisement[key]["details"],
+                                        service=self.service,
+                                        milage=self.advertisement[key]["milage"],
+                                        year=self.advertisement[key]["year"],
+                                        modification_info=self.advertisement[key][
+                                            "modification_info"
+                                        ],
+                                    )
+
+                                    ad.is_send = True
+                                    conn.session.commit()
+
+                                else:
+                                    pass
+
+                            if output["status"] is False:
+                                self.break_status = True
+
+                if self.break_status:
+                    self.break_status = False
                     break
+                self.advertisement = dict()
             return page
 
         except Exception as e:
@@ -169,15 +215,22 @@ class AutoParser(Parser):
             return page
 
 
-ap = AutoParser(price=8000000, debug=True)
-num_page = ap.parse_page()
-print(num_page)
-if num_page > 0:
-    for i in range(1, num_page):
-        if i == 1:
-            df = pd.read_csv(f"auto{i}.csv")
-        else:
-            df_next = pd.read_csv(f"auto{i}.csv")
-            df = pd.concat([df, df_next])
-    df.to_csv("auto.csv", index=False)
-# print(ap.advertisement)
+if __name__ == "__main__":
+    ap = AutoParser(price=8000000, debug=True)
+    csv_folder_path = "./data_results"
+    num_page = ap.parse_page(csv_folder_path=csv_folder_path, save_to_csv=True)
+    print(num_page)
+    if num_page > 0:
+        for i in range(1, num_page):
+            if i == 1:
+                df = pd.read_csv(f"{csv_folder_path}/auto{i}.csv")
+            else:
+                df_next = pd.read_csv(f"{csv_folder_path}/auto{i}.csv")
+                df = pd.concat([df, df_next])
+        df.to_csv("auto.csv", index=False)
+    print(ap.advertisement)
+
+# if __name__ == "__main__":
+#     ap = AutoParser(price=8000000, debug=True)
+#     ap.parse_page(save_to_db=True)
+#     print(ap.advertisement)

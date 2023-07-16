@@ -1,7 +1,7 @@
 venv/
 .idea/
 **/__pycache__
-app/.env
+.env
 auto.csv
 data_results/
 geckodriver.log

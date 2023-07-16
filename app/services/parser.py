@@ -7,8 +7,6 @@ from pyvirtualdisplay import Display
 from selenium.webdriver.chrome.service import Service
 
 basedir = os.path.abspath(os.path.dirname(__file__))
-print(basedir)
-
 
 class Parser:
     __instance = None
@@ -71,5 +69,5 @@ class Parser:
         except Exception as e:
             return e
 
-
-Parser("auto", True)
+if __name__ == "__main__":
+    Parser("auto", True)

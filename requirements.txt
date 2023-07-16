@@ -27,3 +27,7 @@ urllib3==1.26.13
 Werkzeug==2.2.2
 wsproto==1.2.0
 xvfbwrapper==0.2.9
+pandas==2.0.3
+schedule==1.2.0
+telebot==0.0.5
+python_dotenv==1.0.0

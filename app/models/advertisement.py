@@ -15,6 +15,7 @@ class Advertisement(conn.Model):
     milage = conn.Column(conn.Text, nullable=True)
     year = conn.Column(conn.Text, nullable=True)
     service = conn.Column(conn.String(8), nullable=False)
+    modification_info = conn.Column(conn.Text, nullable=True)
     is_send = conn.Column(conn.Boolean, nullable=False, default=False)
 
     def __repr__(self):
@@ -29,6 +30,7 @@ class Advertisement(conn.Model):
                is_send: bool,
                milage: Optional[str] = None,
                year: Optional[str] = None,
+               modification_info: Optional[str] = None,
                ):
         """
         create account
@@ -46,6 +48,7 @@ class Advertisement(conn.Model):
                 self.is_send = is_send
                 self.milage = milage if milage is not None else None
                 self.year = year if year is not None else None
+                self.modification_info = modification_info if modification_info is not None else None
 
                 conn.session.add(self)
                 conn.session.commit()

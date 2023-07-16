@@ -1,1 +1,1 @@
-from .bot import send_ad
+from .bot import send_ad, escape_reserved, get_global_max_price
